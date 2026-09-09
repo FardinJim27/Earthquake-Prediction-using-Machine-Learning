@@ -3,8 +3,9 @@ import Papa from 'papaparse';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
-import { Activity, Search, ChevronRight, BarChart3, Database } from 'lucide-react';
+import { Activity, Search, ChevronRight, BarChart3, Database, Map as MapIcon, Info } from 'lucide-react';
 import { predictMagnitude } from './lib/knn';
+import { APIProvider, Map, AdvancedMarker, Pin, MapMouseEvent } from '@vis.gl/react-google-maps';
 
 export default function App() {
   const [data, setData] = useState<any[]>([]);
@@ -65,6 +66,16 @@ export default function App() {
     });
   };
 
+  const handleMapClick = (e: MapMouseEvent) => {
+    if (e.detail.latLng) {
+      setInputs({
+        ...inputs,
+        latitude: Number(e.detail.latLng.lat.toFixed(4)),
+        longitude: Number(e.detail.latLng.lng.toFixed(4))
+      });
+    }
+  };
+
   // KPIs
   const maxMag = useMemo(() => {
     if (!data.length) return 0;
@@ -99,9 +110,46 @@ export default function App() {
 
       <main className="flex-1 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 w-full grid grid-cols-1 lg:grid-cols-3 gap-8">
         
-        {/* Left Column: Stats & Chart */}
+        {/* Left Column: Stats, Map & Chart */}
         <div className="lg:col-span-2 space-y-8">
           
+          <div className="bg-white border border-zinc-200 rounded-xl shadow-sm p-6">
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 mb-4">
+              <div className="flex items-center gap-2">
+                <MapIcon className="w-5 h-5 text-zinc-400" />
+                <h2 className="text-lg font-medium text-zinc-900">Select Location</h2>
+              </div>
+              {!import.meta.env.VITE_GOOGLE_MAPS_API_KEY && (
+                <div className="flex items-center gap-1.5 text-xs text-amber-600 bg-amber-50 px-2.5 py-1.5 rounded-md border border-amber-200">
+                  <Info className="w-4 h-4" />
+                  <span>Configure VITE_GOOGLE_MAPS_API_KEY for production</span>
+                </div>
+              )}
+            </div>
+            
+            <div className="h-[400px] w-full rounded-lg overflow-hidden border border-zinc-200 relative">
+              <APIProvider apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''}>
+                <Map
+                  mapId="DEMO_MAP_ID"
+                  defaultCenter={{ lat: inputs.latitude, lng: inputs.longitude }}
+                  defaultZoom={5}
+                  onClick={handleMapClick}
+                  disableDefaultUI={true}
+                  zoomControl={true}
+                  gestureHandling={'greedy'}
+                  internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+                >
+                  <AdvancedMarker position={{ lat: inputs.latitude, lng: inputs.longitude }}>
+                    <Pin background={'#ef4444'} borderColor={'#7f1d1d'} glyphColor={'#7f1d1d'} />
+                  </AdvancedMarker>
+                </Map>
+              </APIProvider>
+            </div>
+            <p className="mt-3 text-sm text-zinc-500">
+              Click anywhere on the map to automatically populate the latitude and longitude in the prediction form.
+            </p>
+          </div>
+
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <div className="bg-white border border-zinc-200 rounded-xl p-5 shadow-sm">
               <div className="text-zinc-500 text-sm font-medium mb-1">Total Datapoints</div>
