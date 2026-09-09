@@ -1,0 +1,6 @@
+{
+  "name": "Earthquake Predictor",
+  "description": "Machine learning based earthquake magnitude prediction utilizing K-Nearest Neighbors.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
