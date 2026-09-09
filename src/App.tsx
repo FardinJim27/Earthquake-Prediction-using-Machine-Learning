@@ -5,7 +5,7 @@ import {
 } from 'recharts';
 import { Activity, Search, ChevronRight, BarChart3, Database, Map as MapIcon, Info } from 'lucide-react';
 import { predictMagnitude } from './lib/knn';
-import { APIProvider, Map, AdvancedMarker, Pin, MapMouseEvent } from '@vis.gl/react-google-maps';
+import { APIProvider, Map, Marker, MapMouseEvent } from '@vis.gl/react-google-maps';
 
 export default function App() {
   const [data, setData] = useState<any[]>([]);
@@ -127,23 +127,30 @@ export default function App() {
               )}
             </div>
             
-            <div className="h-[400px] w-full rounded-lg overflow-hidden border border-zinc-200 relative">
-              <APIProvider apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY || ''}>
-                <Map
-                  mapId="DEMO_MAP_ID"
-                  defaultCenter={{ lat: inputs.latitude, lng: inputs.longitude }}
-                  defaultZoom={5}
-                  onClick={handleMapClick}
-                  disableDefaultUI={true}
-                  zoomControl={true}
-                  gestureHandling={'greedy'}
-                  internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
-                >
-                  <AdvancedMarker position={{ lat: inputs.latitude, lng: inputs.longitude }}>
-                    <Pin background={'#ef4444'} borderColor={'#7f1d1d'} glyphColor={'#7f1d1d'} />
-                  </AdvancedMarker>
-                </Map>
-              </APIProvider>
+            <div className="h-[400px] w-full rounded-lg overflow-hidden border border-zinc-200 relative bg-zinc-100 flex items-center justify-center">
+              {import.meta.env.VITE_GOOGLE_MAPS_API_KEY ? (
+                <APIProvider apiKey={import.meta.env.VITE_GOOGLE_MAPS_API_KEY}>
+                  <Map
+                    defaultCenter={{ lat: inputs.latitude, lng: inputs.longitude }}
+                    defaultZoom={5}
+                    onClick={handleMapClick}
+                    disableDefaultUI={true}
+                    zoomControl={true}
+                    gestureHandling={'greedy'}
+                    internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+                  >
+                    <Marker position={{ lat: inputs.latitude, lng: inputs.longitude }} />
+                  </Map>
+                </APIProvider>
+              ) : (
+                <div className="text-center px-6">
+                  <MapIcon className="w-8 h-8 text-zinc-300 mx-auto mb-3" />
+                  <p className="text-sm text-zinc-500 font-medium">Map Disabled</p>
+                  <p className="text-xs text-zinc-400 mt-1 max-w-sm mx-auto">
+                    Please configure VITE_GOOGLE_MAPS_API_KEY in your settings to enable the interactive location selector.
+                  </p>
+                </div>
+              )}
             </div>
             <p className="mt-3 text-sm text-zinc-500">
               Click anywhere on the map to automatically populate the latitude and longitude in the prediction form.
