@@ -10,7 +10,11 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@types/d3": "^7.4.3",
     "@vis.gl/react-google-maps": "^1.10.0",
+    "d3": "^7.9.0",
+    "jspdf": "^4.2.1",
+    "jspdf-autotable": "^5.0.8",
     "lucide-react": "^0.474.0",
     "papaparse": "^5.4.1",
     "react": "^18.3.1",
