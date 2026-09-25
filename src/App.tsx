@@ -3,23 +3,27 @@ import Papa from 'papaparse';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
-import { Activity, Search, ChevronRight, BarChart3, Database, Map as MapIcon, Info } from 'lucide-react';
-import { predictMagnitude } from './lib/knn';
+import { Activity, Search, ChevronRight, BarChart3, Database, Map as MapIcon, Info, RotateCcw, Flame } from 'lucide-react';
+import { predictMagnitude, PredictionResult } from './lib/knn';
+import { calculateCorrelationMatrix } from './lib/correlation';
+import { CorrelationHeatmap } from './components/CorrelationHeatmap';
 import { APIProvider, Map, Marker, MapMouseEvent } from '@vis.gl/react-google-maps';
+
+const DEFAULT_INPUTS = {
+  latitude: 36.12,
+  longitude: 141.59,
+  depth: 41.8,
+  gap: 64.9,
+  rms: 0.88
+};
 
 export default function App() {
   const [data, setData] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
   // Form State
-  const [inputs, setInputs] = useState({
-    latitude: 36.12,
-    longitude: 141.59,
-    depth: 41.8,
-    gap: 64.9,
-    rms: 0.88
-  });
-  const [prediction, setPrediction] = useState<number | null>(null);
+  const [inputs, setInputs] = useState(DEFAULT_INPUTS);
+  const [prediction, setPrediction] = useState<PredictionResult | null>(null);
 
   useEffect(() => {
     // Fetch and parse the CSV
@@ -30,13 +34,19 @@ export default function App() {
           header: true,
           skipEmptyLines: true,
           complete: (results) => {
-            // Filter valid numerical rows for charting
+            // Filter valid numerical rows for charting and modeling
             const validData = results.data.filter((row: any) => 
+              row.latitude && !isNaN(parseFloat(row.latitude)) &&
+              row.longitude && !isNaN(parseFloat(row.longitude)) &&
               row.depth && !isNaN(parseFloat(row.depth)) && 
               row.mag && !isNaN(parseFloat(row.mag))
             ).map((row: any) => ({
               ...row,
+              latitude: parseFloat(row.latitude),
+              longitude: parseFloat(row.longitude),
               depth: parseFloat(row.depth),
+              gap: row.gap && !isNaN(parseFloat(row.gap)) ? parseFloat(row.gap) : 0,
+              rms: row.rms && !isNaN(parseFloat(row.rms)) ? parseFloat(row.rms) : 0,
               mag: parseFloat(row.mag)
             }));
             setData(validData);
@@ -55,8 +65,8 @@ export default function App() {
     if (!data.length) return;
     
     const features = ['latitude', 'longitude', 'depth', 'gap', 'rms'];
-    const mag = predictMagnitude(data, inputs, features, 5);
-    setPrediction(mag);
+    const result = predictMagnitude(data, inputs, features, 5);
+    setPrediction(result);
   };
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -64,6 +74,11 @@ export default function App() {
       ...inputs,
       [e.target.name]: parseFloat(e.target.value) || 0
     });
+  };
+
+  const handleReset = () => {
+    setInputs(DEFAULT_INPUTS);
+    setPrediction(null);
   };
 
   const handleMapClick = (e: MapMouseEvent) => {
@@ -85,6 +100,20 @@ export default function App() {
   const avgDepth = useMemo(() => {
     if (!data.length) return 0;
     return data.reduce((sum, d) => sum + d.depth, 0) / data.length;
+  }, [data]);
+
+  // Feature Correlation Matrix: latitude, longitude, depth, gap, rms vs magnitude
+  const correlationData = useMemo(() => {
+    if (!data.length) return null;
+    const variables = [
+      { key: 'latitude', label: 'Latitude' },
+      { key: 'longitude', label: 'Longitude' },
+      { key: 'depth', label: 'Depth' },
+      { key: 'gap', label: 'Azimuthal Gap' },
+      { key: 'rms', label: 'RMS' },
+      { key: 'mag', label: 'Magnitude' }
+    ];
+    return calculateCorrelationMatrix(data, variables);
   }, [data]);
 
   return (
@@ -178,6 +207,7 @@ export default function App() {
               <h2 className="text-lg font-medium text-zinc-900">Depth vs Magnitude Distribution</h2>
             </div>
             
+            {/* Depth vs Magnitude Chart */}
             {loading ? (
               <div className="h-[400px] flex items-center justify-center bg-zinc-50 rounded-lg border border-zinc-100">
                 <div className="animate-pulse flex items-center gap-2 text-zinc-400">
@@ -203,7 +233,7 @@ export default function App() {
                       type="number" 
                       dataKey="mag" 
                       name="Magnitude" 
-                      axisLine={false}
+                      axisLine={false} 
                       tickLine={false}
                       tick={{ fill: '#71717a' }}
                       label={{ value: 'Magnitude', angle: -90, position: 'insideLeft', offset: 10, fill: '#71717a', fontSize: 13 }}
@@ -217,6 +247,30 @@ export default function App() {
                   </ScatterChart>
                 </ResponsiveContainer>
               </div>
+            )}
+          </div>
+
+          {/* Feature Correlation Heatmap Card */}
+          <div className="bg-white border border-zinc-200 rounded-xl shadow-sm p-6">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-6">
+              <div className="flex items-center gap-2">
+                <Flame className="w-5 h-5 text-indigo-500" />
+                <h2 className="text-lg font-medium text-zinc-900">Feature Correlation Matrix</h2>
+              </div>
+              <span className="text-xs text-zinc-500 font-medium">
+                Pearson correlation coefficients (r)
+              </span>
+            </div>
+
+            {loading || !correlationData ? (
+              <div className="h-[280px] flex items-center justify-center bg-zinc-50 rounded-lg border border-zinc-100">
+                <div className="animate-pulse flex items-center gap-2 text-zinc-400">
+                  <Activity className="w-5 h-5 animate-spin" />
+                  Calculating feature correlations...
+                </div>
+              </div>
+            ) : (
+              <CorrelationHeatmap correlationData={correlationData} targetKey="mag" />
             )}
           </div>
         </div>
@@ -286,20 +340,80 @@ export default function App() {
                 />
               </div>
               
-              <button 
-                type="submit"
-                disabled={loading}
-                className="w-full mt-4 flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 text-white font-medium px-4 py-2.5 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Run K-NN Predictor
-                <ChevronRight className="w-4 h-4" />
-              </button>
+              <div className="flex items-center gap-2 pt-2">
+                <button 
+                  type="submit"
+                  disabled={loading}
+                  className="flex-1 flex items-center justify-center gap-2 bg-zinc-900 hover:bg-zinc-800 text-white font-medium px-4 py-2.5 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed text-sm"
+                >
+                  Run K-NN Predictor
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+                <button
+                  type="button"
+                  onClick={handleReset}
+                  className="flex items-center justify-center gap-1.5 px-3.5 py-2.5 text-zinc-700 hover:text-zinc-900 bg-zinc-100 hover:bg-zinc-200 border border-zinc-200 rounded-md font-medium text-sm transition-colors"
+                  title="Reset input values to default starting coordinates"
+                >
+                  <RotateCcw className="w-4 h-4 text-zinc-500" />
+                  Reset
+                </button>
+              </div>
             </form>
 
             {prediction !== null && (
-              <div className="mt-6 p-5 bg-indigo-50 border border-indigo-100 rounded-lg text-center animate-in fade-in zoom-in duration-200">
-                <div className="text-sm text-indigo-600 font-medium mb-1">Predicted Magnitude</div>
-                <div className="text-4xl font-bold text-indigo-900">{prediction.toFixed(2)}</div>
+              <div className="mt-6 p-5 bg-indigo-50/70 border border-indigo-100 rounded-xl space-y-4 animate-in fade-in zoom-in duration-200">
+                <div className="grid grid-cols-2 gap-3 divide-x divide-indigo-100">
+                  <div className="text-center pr-2">
+                    <div className="text-xs font-semibold text-indigo-600 uppercase tracking-wider mb-1">
+                      Predicted Magnitude
+                    </div>
+                    <div className="text-3xl sm:text-4xl font-bold text-indigo-950">
+                      {prediction.magnitude.toFixed(2)}
+                    </div>
+                    <div className="text-[11px] text-indigo-500 mt-1 font-medium">
+                      K-NN average (k={prediction.k})
+                    </div>
+                  </div>
+                  <div className="text-center pl-2">
+                    <div className="text-xs font-semibold text-amber-700 uppercase tracking-wider mb-1">
+                      Uncertainty
+                    </div>
+                    <div className="text-3xl sm:text-4xl font-bold text-amber-900">
+                      ±{prediction.uncertainty.toFixed(2)}
+                    </div>
+                    <div className="text-[11px] text-amber-700/80 mt-1 font-medium">
+                      Std Dev (σ of {prediction.k} neighbors)
+                    </div>
+                  </div>
+                </div>
+
+                <div className="pt-3 border-t border-indigo-100/80 flex items-center justify-between text-xs text-zinc-600">
+                  <span className="font-medium text-zinc-700">Confidence Interval (±1σ):</span>
+                  <span className="font-mono bg-white px-2 py-0.5 rounded border border-indigo-100 text-indigo-900 font-semibold shadow-xs">
+                    {Math.max(0, prediction.magnitude - prediction.uncertainty).toFixed(2)} – {(prediction.magnitude + prediction.uncertainty).toFixed(2)}
+                  </span>
+                </div>
+
+                {prediction.neighborMagnitudes && prediction.neighborMagnitudes.length > 0 && (
+                  <div className="pt-2.5 border-t border-indigo-100/60">
+                    <div className="text-[11px] text-zinc-500 mb-1.5 flex items-center justify-between font-medium">
+                      <span>Neighbor Magnitudes (k={prediction.k}):</span>
+                      <span className="text-[10px] text-zinc-400">Closest matches</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5">
+                      {prediction.neighborMagnitudes.map((mag, idx) => (
+                        <span
+                          key={idx}
+                          className="px-2 py-0.5 bg-white text-zinc-700 border border-indigo-100 rounded text-xs font-mono font-medium"
+                          title={`Neighbor #${idx + 1} magnitude`}
+                        >
+                          {mag.toFixed(1)}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             

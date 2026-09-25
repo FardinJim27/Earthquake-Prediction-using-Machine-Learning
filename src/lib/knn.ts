@@ -10,12 +10,19 @@ export function normalize(data: any[], features: string[]) {
   return stats;
 }
 
+export interface PredictionResult {
+  magnitude: number;
+  uncertainty: number;
+  k: number;
+  neighborMagnitudes: number[];
+}
+
 export function predictMagnitude(
   trainData: any[],
   input: Record<string, number>,
   features: string[],
   k: number = 5
-) {
+): PredictionResult {
   const stats = normalize(trainData, features);
 
   // Calculate distance for all points
@@ -39,9 +46,19 @@ export function predictMagnitude(
   // Sort by distance
   distances.sort((a, b) => a.distance - b.distance);
 
-  // Average the top k
+  // Select the top k nearest neighbors
   const topK = distances.slice(0, k);
-  const avgMag = topK.reduce((sum, item) => sum + item.mag, 0) / k;
+  const kCount = topK.length || 1;
+  const avgMag = topK.reduce((sum, item) => sum + item.mag, 0) / kCount;
 
-  return avgMag;
+  // Calculate standard deviation of the K nearest neighbors' magnitudes
+  const variance = topK.reduce((sum, item) => sum + Math.pow(item.mag - avgMag, 2), 0) / kCount;
+  const uncertainty = Math.sqrt(variance);
+
+  return {
+    magnitude: avgMag,
+    uncertainty,
+    k: topK.length,
+    neighborMagnitudes: topK.map(item => item.mag)
+  };
 }
