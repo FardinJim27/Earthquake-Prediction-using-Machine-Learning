@@ -9,7 +9,8 @@ import {
   MapPin,
   Info,
   Map as MapIcon,
-  Grid
+  Grid,
+  HelpCircle
 } from 'lucide-react';
 import {
   EarthquakeRecord,
@@ -291,6 +292,20 @@ export const SeismicGridMap: React.FC<SeismicGridMapProps> = ({
               <span className="hidden sm:inline">Quakes</span>
             </button>
           )}
+
+          {/* Legend Anchor Button */}
+          <button
+            type="button"
+            onClick={() => {
+              const el = document.getElementById('map-descriptive-legend');
+              if (el) el.scrollIntoView({ behavior: 'smooth' });
+            }}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors shadow-2xs"
+            title="Jump to comprehensive cartographic legend and interpretation guide"
+          >
+            <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
+            <span className="hidden sm:inline">Legend</span>
+          </button>
 
           {/* Hide/Show Map Switcher (if prop provided) */}
           {showMapToggle && onToggleMap && (

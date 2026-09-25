@@ -3,14 +3,23 @@ import Papa from 'papaparse';
 import {
   ScatterChart, Scatter, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer
 } from 'recharts';
-import { Activity, Search, ChevronRight, BarChart3, Database, Map as MapIcon, RotateCcw, Flame, Download, Check, AlertCircle, MapPinOff, Eye, EyeOff, FileText, History, Bell, BellRing, AlertTriangle, Layers, Sparkles } from 'lucide-react';
+import { Activity, Search, ChevronRight, BarChart3, Database, Map as MapIcon, RotateCcw, Flame, Download, Check, AlertCircle, MapPinOff, Eye, EyeOff, FileText, History, Bell, BellRing, AlertTriangle, Layers, Sparkles, Scale, HelpCircle } from 'lucide-react';
 import { predictMagnitude, PredictionResult } from './lib/knn';
+import {
+  trainLinearRegression,
+  predictLinearRegression,
+  LinearRegressionModel,
+  LinearPredictionResult
+} from './lib/linearRegression';
+import { ModelComparisonCard } from './components/ModelComparisonCard';
+import { FeatureImportanceCard } from './components/FeatureImportanceCard';
 import { calculateCorrelationMatrix } from './lib/correlation';
 import { CorrelationHeatmap } from './components/CorrelationHeatmap';
 import { generatePredictionReport } from './lib/pdfReport';
 import { PredictionHistory, HistoryItem } from './components/PredictionHistory';
 import { SeismicGridMap } from './components/SeismicGridMap';
-import { D3SeismicHeatmap } from './components/D3SeismicHeatmap';
+import { D3SeismicHeatmap, ColorPalette, HeatmapMetric } from './components/D3SeismicHeatmap';
+import { MapDescriptiveLegend } from './components/MapDescriptiveLegend';
 import {
   NotificationSettings,
   AlertDetails,
@@ -49,6 +58,29 @@ export default function App() {
   const [pdfSuccess, setPdfSuccess] = useState(false);
   const [showMap, setShowMap] = useState(true);
   const [mapOverlayMode, setMapOverlayMode] = useState<'d3' | 'grid'>('d3');
+  const [d3Palette, setD3Palette] = useState<ColorPalette>('inferno');
+  const [d3Metric, setD3Metric] = useState<HeatmapMetric>('energy');
+  const [showCompareModels, setShowCompareModels] = useState<boolean>(true);
+
+  // Train Multiple Linear Regression model on dataset
+  const linearModel = useMemo<LinearRegressionModel | null>(() => {
+    if (!data || !data.length) return null;
+    const features = ['latitude', 'longitude', 'depth', 'gap', 'rms'];
+    return trainLinearRegression(data, features, 'mag');
+  }, [data]);
+
+  // Compute Linear Regression prediction for current inputs
+  const linearPrediction = useMemo<LinearPredictionResult | null>(() => {
+    if (!linearModel) return null;
+    const numericInputs = {
+      latitude: Number(inputs.latitude) || 0,
+      longitude: Number(inputs.longitude) || 0,
+      depth: Number(inputs.depth) || 0,
+      gap: Number(inputs.gap) || 0,
+      rms: Number(inputs.rms) || 0
+    };
+    return predictLinearRegression(linearModel, numericInputs);
+  }, [linearModel, inputs]);
 
   // Real-Time Notification State (User-defined threshold, default 5.0)
   const [notificationSettings, setNotificationSettings] = useState<NotificationSettings>(() =>
@@ -227,6 +259,10 @@ export default function App() {
             }));
             setData(validData);
             setLoading(false);
+            // Compute baseline prediction for default inputs
+            const features = ['latitude', 'longitude', 'depth', 'gap', 'rms'];
+            const initialResult = predictMagnitude(validData, DEFAULT_INPUTS, features, 5);
+            setPrediction(initialResult);
           }
         });
       })
@@ -327,6 +363,8 @@ export default function App() {
         data,
         inputs,
         prediction: currentPrediction,
+        linearPrediction,
+        linearModel,
         featureRanges,
         maxMag,
         avgDepth
@@ -467,6 +505,45 @@ export default function App() {
               </span>
             </button>
 
+            {/* Compare Models Toggle Button */}
+            <button
+              type="button"
+              onClick={() => {
+                setShowCompareModels(!showCompareModels);
+                if (!showCompareModels) {
+                  setTimeout(() => {
+                    const el = document.getElementById('compare-models-section');
+                    if (el) el.scrollIntoView({ behavior: 'smooth' });
+                  }, 100);
+                }
+              }}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all border ${
+                showCompareModels
+                  ? 'bg-indigo-50 hover:bg-indigo-100 text-indigo-700 border-indigo-200 shadow-2xs ring-1 ring-indigo-200'
+                  : 'bg-zinc-100 hover:bg-zinc-200/80 text-zinc-600 border-zinc-200'
+              }`}
+              title="Compare K-Nearest Neighbors against Multiple Linear Regression"
+            >
+              <Scale className="w-4 h-4 text-indigo-600" />
+              <span className="hidden md:inline">Compare Models</span>
+              <span className="md:hidden">Compare</span>
+            </button>
+
+            {/* Feature Importance Jump Button */}
+            <button
+              type="button"
+              onClick={() => {
+                const el = document.getElementById('feature-importance-section');
+                if (el) el.scrollIntoView({ behavior: 'smooth' });
+              }}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all border bg-zinc-100 hover:bg-zinc-200/80 text-zinc-600 border-zinc-200"
+              title="Jump to ranked Feature Importance & Magnitude Drivers"
+            >
+              <BarChart3 className="w-4 h-4 text-rose-600" />
+              <span className="hidden md:inline">Feature Drivers</span>
+              <span className="md:hidden">Drivers</span>
+            </button>
+
             <button
               onClick={() => setShowMap(!showMap)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-all border ${
@@ -595,9 +672,24 @@ export default function App() {
                 </button>
               </div>
 
-              <div className="text-xs text-zinc-500 hidden sm:flex items-center gap-1.5 font-medium">
-                <Sparkles className="w-3.5 h-3.5 text-amber-500" />
-                <span>Click map to target coordinates</span>
+              <div className="flex items-center gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const el = document.getElementById('map-descriptive-legend');
+                    if (el) el.scrollIntoView({ behavior: 'smooth' });
+                  }}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold text-indigo-700 hover:text-indigo-900 bg-indigo-50 hover:bg-indigo-100 rounded-lg border border-indigo-200 transition-colors shadow-2xs"
+                  title="View detailed cartographic explanation of heatmap colors and grid markers"
+                >
+                  <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
+                  <span>Map Legend</span>
+                </button>
+
+                <div className="text-xs text-zinc-500 hidden sm:flex items-center gap-1.5 font-medium">
+                  <Sparkles className="w-3.5 h-3.5 text-amber-500" />
+                  <span>Click map to target coordinates</span>
+                </div>
               </div>
             </div>
           )}
@@ -618,6 +710,10 @@ export default function App() {
                 }}
                 showMapToggle={true}
                 onToggleMap={() => setShowMap(false)}
+                palette={d3Palette}
+                onPaletteChange={setD3Palette}
+                metric={d3Metric}
+                onMetricChange={setD3Metric}
               />
             ) : (
               <SeismicGridMap
@@ -656,6 +752,39 @@ export default function App() {
                 <Eye className="w-3.5 h-3.5" />
                 Show Map
               </button>
+            </div>
+          )}
+
+          {/* Descriptive Map Legend & Cartographic Guide */}
+          {showMap && (
+            <div id="map-descriptive-legend">
+              <MapDescriptiveLegend
+                currentMode={mapOverlayMode}
+                d3Palette={d3Palette}
+                d3Metric={d3Metric}
+                defaultExpanded={true}
+              />
+            </div>
+          )}
+
+          {/* Side-by-Side Model Comparison Section */}
+          {showCompareModels && prediction !== null && linearPrediction !== null && linearModel !== null && (
+            <div id="compare-models-section" className="space-y-2 animate-in fade-in duration-200">
+              <ModelComparisonCard
+                knnResult={prediction}
+                linearResult={linearPrediction}
+                linearModel={linearModel}
+              />
+            </div>
+          )}
+
+          {/* Feature Importance & Magnitude Drivers Section */}
+          {linearModel !== null && (
+            <div id="feature-importance-section" className="space-y-2 animate-in fade-in duration-200">
+              <FeatureImportanceCard
+                linearModel={linearModel}
+                currentInputs={inputs}
+              />
             </div>
           )}
 
@@ -1091,6 +1220,45 @@ export default function App() {
                           {mag.toFixed(1)}
                         </span>
                       ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Secondary Model (Linear Regression) Snapshot & Toggle */}
+                {linearPrediction !== null && (
+                  <div className="pt-2.5 border-t border-indigo-100/60">
+                    <div className="p-3 bg-white/95 rounded-lg border border-indigo-100 shadow-2xs space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-1.5 font-semibold text-zinc-900">
+                          <Scale className="w-3.5 h-3.5 text-emerald-600" />
+                          <span>Compare Model (Linear Reg)</span>
+                        </div>
+                        <span className="font-mono text-emerald-700 font-bold text-xs">
+                          M {linearPrediction.magnitude.toFixed(2)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-zinc-500">
+                        <span>
+                          Difference:{' '}
+                          <strong className="font-mono text-zinc-800">
+                            Δ M {Math.abs(prediction.magnitude - linearPrediction.magnitude).toFixed(2)}
+                          </strong>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setShowCompareModels(true);
+                            setTimeout(() => {
+                              const el = document.getElementById('compare-models-section');
+                              if (el) el.scrollIntoView({ behavior: 'smooth' });
+                            }, 50);
+                          }}
+                          className="text-indigo-600 hover:text-indigo-800 font-medium underline underline-offset-2 cursor-pointer"
+                        >
+                          {showCompareModels ? 'Scroll to Analysis' : 'Show Side-by-Side'}
+                        </button>
+                      </div>
                     </div>
                   </div>
                 )}

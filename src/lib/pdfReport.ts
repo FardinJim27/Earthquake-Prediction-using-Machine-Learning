@@ -1,11 +1,14 @@
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { PredictionResult } from './knn';
+import { LinearRegressionModel } from './linearRegression';
 
 export interface ReportOptions {
   data: any[];
   inputs: Record<string, string | number>;
   prediction: PredictionResult | null;
+  linearPrediction?: { magnitude: number; uncertainty: number; formula?: string } | null;
+  linearModel?: LinearRegressionModel | null;
   featureRanges?: Record<string, { min: number; max: number }> | null;
   maxMag?: number;
   avgDepth?: number;
@@ -25,6 +28,8 @@ export function generatePredictionReport({
   data,
   inputs,
   prediction,
+  linearPrediction,
+  linearModel,
   featureRanges,
   maxMag,
   avgDepth
@@ -132,11 +137,14 @@ export function generatePredictionReport({
     doc.text(`${minBound} – ${maxBound}`, col3X, yPos + 64);
 
     // Sub-info: Classification & K value
-    doc.setFontSize(8.5);
+    doc.setFontSize(8);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(...secondaryColor);
+    const linearComparisonText = linearPrediction
+      ? `  •  Linear Reg: M ${linearPrediction.magnitude.toFixed(2)} (Δ ${Math.abs(prediction.magnitude - linearPrediction.magnitude).toFixed(2)})`
+      : '';
     doc.text(
-      `Classification: ${classification.label}  •  Algorithm: K-NN (k=${prediction.k} nearest historical events)  •  ${classification.impact}`,
+      `Classification: ${classification.label}  •  K-NN (k=${prediction.k})${linearComparisonText}  •  ${classification.impact}`,
       margin + 14,
       yPos + 80
     );
@@ -271,6 +279,57 @@ export function generatePredictionReport({
         2: { cellWidth: 90 },
         3: { cellWidth: 90 },
         4: { cellWidth: 'auto' }
+      }
+    });
+
+    yPos = (doc as any).lastAutoTable ? (doc as any).lastAutoTable.finalY + 18 : yPos + 100;
+  }
+
+  // Feature Importance Table (if linear model trained)
+  if (linearModel && linearModel.featureImportance && linearModel.featureImportance.length > 0) {
+    if (yPos > pageHeight - 140) {
+      doc.addPage();
+      yPos = margin + 20;
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(11);
+    doc.setTextColor(...secondaryColor);
+    doc.text(`Feature Importance Ranking (Multiple Linear Regression, R² = ${linearModel.r2.toFixed(3)})`, margin, yPos);
+    yPos += 8;
+
+    const importanceRows = linearModel.featureImportance.map((f) => [
+      `#${f.rank}`,
+      f.displayName + (f.unit ? ` (${f.unit})` : ''),
+      f.importanceScore.toFixed(3),
+      `${f.relativePercentage.toFixed(1)}%`,
+      `${f.rawCoefficient >= 0 ? '+' : ''}${f.rawCoefficient.toFixed(5)}`,
+      f.direction === 'positive' ? 'Direct (+)' : 'Inverse (-)'
+    ]);
+
+    autoTable(doc, {
+      startY: yPos,
+      margin: { left: margin, right: margin },
+      head: [['Rank', 'Variable Name', 'Std Beta (|β*|)', 'Relative Share', 'Raw Slope (β)', 'Correlation']],
+      body: importanceRows,
+      theme: 'grid',
+      headStyles: {
+        fillColor: [225, 29, 72], // rose-600
+        textColor: [255, 255, 255],
+        fontSize: 8,
+        fontStyle: 'bold'
+      },
+      bodyStyles: {
+        fontSize: 7.5,
+        textColor: [30, 41, 59]
+      },
+      columnStyles: {
+        0: { cellWidth: 40, fontStyle: 'bold' },
+        1: { cellWidth: 130, fontStyle: 'bold' },
+        2: { cellWidth: 90 },
+        3: { cellWidth: 80 },
+        4: { cellWidth: 90 },
+        5: { cellWidth: 'auto' }
       }
     });
 

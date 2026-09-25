@@ -10,8 +10,13 @@ import {
   ZoomIn,
   ZoomOut,
   MapPin,
-  Info
+  Info,
+  HelpCircle,
+  Globe,
+  Play,
+  Map as MapIcon
 } from 'lucide-react';
+import { APIProvider, Map as GoogleMap, Marker, MapMouseEvent } from '@vis.gl/react-google-maps';
 import { EarthquakeRecord } from '../lib/gridOverlay';
 
 interface D3SeismicHeatmapProps {
@@ -21,10 +26,15 @@ interface D3SeismicHeatmapProps {
   onSelectCoordinates: (lat: number, lng: number) => void;
   showMapToggle?: boolean;
   onToggleMap?: () => void;
+  palette?: ColorPalette;
+  onPaletteChange?: (p: ColorPalette) => void;
+  metric?: HeatmapMetric;
+  onMetricChange?: (m: HeatmapMetric) => void;
 }
 
 export type HeatmapMetric = 'energy' | 'magnitude' | 'density';
 export type ColorPalette = 'inferno' | 'turbo' | 'ylorrd';
+export type MapDisplayMode = 'real' | 'hybrid' | 'd3';
 
 export const D3SeismicHeatmap: React.FC<D3SeismicHeatmapProps> = ({
   data,
@@ -32,18 +42,85 @@ export const D3SeismicHeatmap: React.FC<D3SeismicHeatmapProps> = ({
   selectedLng,
   onSelectCoordinates,
   showMapToggle,
-  onToggleMap
+  onToggleMap,
+  palette: propPalette,
+  onPaletteChange,
+  metric: propMetric,
+  onMetricChange
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const zoomGRef = useRef<SVGGElement>(null);
 
-  // Heatmap configuration state
-  const [metric, setMetric] = useState<HeatmapMetric>('energy');
+  // Google Maps API Key
+  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || '';
+
+  // View Mode: Starts on 'real' (Real Google Map), with smooth morphing/changing into 'd3'
+  const [displayMode, setDisplayMode] = useState<MapDisplayMode>('real');
+  const [autoTransitionCountdown, setAutoTransitionCountdown] = useState<number>(3);
+  const [isAutoTransitioning, setIsAutoTransitioning] = useState<boolean>(true);
+  const [hybridOpacity, setHybridOpacity] = useState<number>(0.65);
+  const [googleMapType, setGoogleMapType] = useState<string>('terrain');
+
+  // Auto-transition countdown: show real map at first, then change into D3 Heatmap
+  useEffect(() => {
+    if (!isAutoTransitioning) return;
+    if (autoTransitionCountdown > 0) {
+      const timer = setTimeout(() => {
+        setAutoTransitionCountdown(prev => prev - 1);
+      }, 1000);
+      return () => clearTimeout(timer);
+    } else {
+      setDisplayMode('d3');
+      setIsAutoTransitioning(false);
+    }
+  }, [autoTransitionCountdown, isAutoTransitioning]);
+
+  const handleReplayTransition = () => {
+    setDisplayMode('real');
+    setAutoTransitionCountdown(3);
+    setIsAutoTransitioning(true);
+  };
+
+  const handleSkipToD3 = () => {
+    setIsAutoTransitioning(false);
+    setDisplayMode('d3');
+  };
+
+  const handleKeepRealMap = () => {
+    setIsAutoTransitioning(false);
+    setDisplayMode('real');
+  };
+
+  const handleGoogleMapClick = (e: MapMouseEvent) => {
+    if (e.detail.latLng) {
+      onSelectCoordinates(
+        Number(e.detail.latLng.lat.toFixed(3)),
+        Number(e.detail.latLng.lng.toFixed(3))
+      );
+    }
+  };
+
+  // Significant quakes for real Google Map
+  const significantQuakes = useMemo(() => {
+    if (!data || data.length === 0) return [];
+    return data
+      .filter((d) => d.mag && d.mag >= 5.8 && !isNaN(d.latitude) && !isNaN(d.longitude))
+      .slice(0, 25);
+  }, [data]);
+
+  // Heatmap configuration state (supports controlled or uncontrolled)
+  const [internalMetric, setInternalMetric] = useState<HeatmapMetric>('energy');
+  const metric = propMetric ?? internalMetric;
+  const setMetric = onMetricChange ?? setInternalMetric;
+
+  const [internalPalette, setInternalPalette] = useState<ColorPalette>('inferno');
+  const palette = propPalette ?? internalPalette;
+  const setPalette = onPaletteChange ?? setInternalPalette;
+
   const [bandwidth, setBandwidth] = useState<number>(24);
   const [thresholdCount, setThresholdCount] = useState<number>(18);
   const [opacity, setOpacity] = useState<number>(0.75);
-  const [palette, setPalette] = useState<ColorPalette>('inferno');
   const [showEpicenters, setShowEpicenters] = useState<boolean>(true);
   const [showContours, setShowContours] = useState<boolean>(true);
   const [hoveredPoint, setHoveredPoint] = useState<{
@@ -336,6 +413,98 @@ export const D3SeismicHeatmap: React.FC<D3SeismicHeatmapProps> = ({
 
         {/* Toolbar Controls */}
         <div className="flex flex-wrap items-center gap-2">
+          {/* View Mode Switcher: Real Map -> Hybrid -> D3 Heatmap */}
+          <div className="flex items-center bg-white border border-zinc-200 p-0.5 rounded-lg text-xs shadow-2xs">
+            <button
+              type="button"
+              onClick={() => {
+                setIsAutoTransitioning(false);
+                setDisplayMode('real');
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-all ${
+                displayMode === 'real'
+                  ? 'bg-indigo-600 text-white shadow-2xs font-semibold'
+                  : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50'
+              }`}
+              title="View Real Geographic Google Map"
+            >
+              <Globe className="w-3.5 h-3.5" />
+              <span>Real Map</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsAutoTransitioning(false);
+                setDisplayMode('hybrid');
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-all ${
+                displayMode === 'hybrid'
+                  ? 'bg-rose-600 text-white shadow-2xs font-semibold'
+                  : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50'
+              }`}
+              title="Overlay D3 Heatmap translucent on Real Map"
+            >
+              <Layers className="w-3.5 h-3.5" />
+              <span>Hybrid Overlay</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => {
+                setIsAutoTransitioning(false);
+                setDisplayMode('d3');
+              }}
+              className={`flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium transition-all ${
+                displayMode === 'd3'
+                  ? 'bg-rose-600 text-white shadow-2xs font-semibold'
+                  : 'text-zinc-600 hover:text-zinc-900 hover:bg-zinc-50'
+              }`}
+              title="View Pure D3 Geographic Risk Heatmap"
+            >
+              <Flame className="w-3.5 h-3.5" />
+              <span>D3 Heatmap</span>
+            </button>
+          </div>
+
+          {/* Morph / Transition Button */}
+          <button
+            type="button"
+            onClick={displayMode === 'real' ? handleSkipToD3 : handleReplayTransition}
+            className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold text-rose-700 bg-rose-50 hover:bg-rose-100 border border-rose-200 transition-colors shadow-2xs"
+            title="Play transformation from Real Map into D3 Risk Heatmap"
+          >
+            {displayMode === 'real' ? (
+              <>
+                <Play className="w-3 h-3 text-rose-600 fill-rose-600" />
+                <span>Change into D3 Heatmap</span>
+              </>
+            ) : (
+              <>
+                <RotateCcw className="w-3 h-3 text-rose-600" />
+                <span>Replay Morph (Real → D3)</span>
+              </>
+            )}
+          </button>
+
+          {/* Real Map Layer Type (Terrain, Satellite, Roadmap) */}
+          {(displayMode === 'real' || displayMode === 'hybrid') && (
+            <div className="flex items-center bg-white border border-zinc-200 rounded-lg text-xs px-2 py-1 gap-1.5 shadow-2xs">
+              <MapIcon className="w-3.5 h-3.5 text-zinc-400" />
+              <select
+                value={googleMapType}
+                onChange={(e) => setGoogleMapType(e.target.value)}
+                aria-label="Map Layer Type"
+                className="bg-transparent text-zinc-700 font-medium focus:outline-none cursor-pointer text-xs"
+              >
+                <option value="terrain">Terrain</option>
+                <option value="roadmap">Roadmap</option>
+                <option value="satellite">Satellite</option>
+                <option value="hybrid">Satellite Hybrid</option>
+              </select>
+            </div>
+          )}
+
           {/* Metric Selector */}
           <div className="flex items-center bg-white border border-zinc-200 p-0.5 rounded-lg text-xs shadow-2xs">
             <button
@@ -421,6 +590,20 @@ export const D3SeismicHeatmap: React.FC<D3SeismicHeatmapProps> = ({
             <span className="hidden sm:inline">Quakes</span>
           </button>
 
+          {/* Legend Anchor Button */}
+          <button
+            type="button"
+            onClick={() => {
+              const el = document.getElementById('map-descriptive-legend');
+              if (el) el.scrollIntoView({ behavior: 'smooth' });
+            }}
+            className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-medium text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 transition-colors shadow-2xs"
+            title="Jump to comprehensive cartographic legend and interpretation guide"
+          >
+            <HelpCircle className="w-3.5 h-3.5 text-indigo-600" />
+            <span className="hidden sm:inline">Legend</span>
+          </button>
+
           {/* Hide/Show Map Switcher (if prop provided) */}
           {showMapToggle && onToggleMap && (
             <button
@@ -436,36 +619,156 @@ export const D3SeismicHeatmap: React.FC<D3SeismicHeatmapProps> = ({
         </div>
       </div>
 
-      {/* Density Heatmap Viewport */}
+      {/* Map Viewport Area (Real Google Map + D3 Risk Heatmap) */}
       <div
         ref={containerRef}
-        className="relative w-full h-[420px] bg-slate-950 overflow-hidden cursor-crosshair select-none"
+        className="relative w-full h-[440px] bg-slate-950 overflow-hidden select-none"
         onMouseLeave={() => setHoveredPoint(null)}
       >
-        <svg
-          ref={svgRef}
-          viewBox={`0 0 ${svgWidth} ${svgHeight}`}
-          className="w-full h-full"
-          preserveAspectRatio="xMidYMid meet"
-          onClick={handleSvgClick}
-          onMouseMove={handleMouseMove}
+        {/* Layer 1: Real Geographic Google Map */}
+        {apiKey ? (
+          <div
+            className={`absolute inset-0 transition-opacity duration-1000 ${
+              displayMode === 'd3'
+                ? 'opacity-0 pointer-events-none'
+                : 'opacity-100 pointer-events-auto'
+            }`}
+          >
+            <APIProvider apiKey={apiKey}>
+              <GoogleMap
+                defaultCenter={{
+                  lat: selectedLat || 36.5,
+                  lng: selectedLng || 140.0
+                }}
+                defaultZoom={5}
+                onClick={handleGoogleMapClick}
+                disableDefaultUI={false}
+                zoomControl={true}
+                gestureHandling={'greedy'}
+                internalUsageAttributionIds={['gmp_mcp_codeassist_v1_aistudio']}
+                mapTypeId={googleMapType}
+              >
+                {/* Selected Active Prediction Target Marker */}
+                <Marker
+                  position={{
+                    lat: selectedLat,
+                    lng: selectedLng
+                  }}
+                  title={`Target Coordinates: ${selectedLat.toFixed(2)}°N, ${selectedLng.toFixed(2)}°E`}
+                />
+
+                {/* Major Historical Earthquake Epicenters on Real Map */}
+                {significantQuakes.map((q, idx) => (
+                  <Marker
+                    key={`gmap-quake-${idx}`}
+                    position={{ lat: q.latitude, lng: q.longitude }}
+                    title={`M ${q.mag.toFixed(1)} - Depth: ${q.depth}km (${q.latitude}°N, ${q.longitude}°E)`}
+                  />
+                ))}
+              </GoogleMap>
+            </APIProvider>
+          </div>
+        ) : (
+          <div className="absolute inset-0 flex items-center justify-center bg-zinc-900 text-zinc-400 text-xs">
+            Google Maps API Key not available
+          </div>
+        )}
+
+        {/* Auto-Transition Notification Banner */}
+        {isAutoTransitioning && displayMode === 'real' && (
+          <div className="absolute top-3 left-3 right-3 sm:left-auto sm:right-3 sm:max-w-md z-30 bg-zinc-900/95 backdrop-blur-md border border-rose-500/50 rounded-xl p-3 shadow-2xl text-white animate-in fade-in slide-in-from-top-2 duration-300">
+            <div className="flex items-center justify-between gap-3 mb-1">
+              <div className="flex items-center gap-2">
+                <span className="flex h-2.5 w-2.5 relative">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-rose-500"></span>
+                </span>
+                <span className="text-xs font-semibold text-rose-300 flex items-center gap-1.5">
+                  <Globe className="w-3.5 h-3.5 text-rose-400" />
+                  <span>Showing Real Map First</span>
+                </span>
+              </div>
+              <span className="text-[11px] font-mono bg-rose-950 text-rose-300 border border-rose-700/60 px-2 py-0.5 rounded-full font-bold">
+                Morphing in {autoTransitionCountdown}s
+              </span>
+            </div>
+
+            <p className="text-[11px] text-zinc-300 leading-snug">
+              Displaying the real geographic map with verified earthquake coordinates, then transforming into the continuous D3 Seismic Risk Heatmap.
+            </p>
+
+            {/* Countdown progress bar */}
+            <div className="w-full bg-zinc-800 rounded-full h-1 my-2 overflow-hidden">
+              <div
+                className="bg-rose-500 h-full transition-all duration-1000 ease-linear"
+                style={{ width: `${((3 - autoTransitionCountdown) / 3) * 100}%` }}
+              />
+            </div>
+
+            <div className="flex items-center justify-between gap-2 pt-1 border-t border-zinc-800/80">
+              <button
+                type="button"
+                onClick={handleKeepRealMap}
+                className="text-[11px] text-zinc-400 hover:text-white transition-colors"
+              >
+                Keep Real Map
+              </button>
+
+              <button
+                type="button"
+                onClick={handleSkipToD3}
+                className="flex items-center gap-1 text-[11px] font-semibold bg-rose-600 hover:bg-rose-500 text-white px-2.5 py-1 rounded-md transition-all shadow-xs"
+              >
+                <span>Change into D3 Heatmap Now</span>
+                <Flame className="w-3 h-3 text-rose-200" />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Layer 2: D3 Heatmap SVG Overlay */}
+        <div
+          className={`absolute inset-0 transition-opacity duration-1000 ${
+            displayMode === 'real'
+              ? 'opacity-0 pointer-events-none'
+              : displayMode === 'hybrid'
+              ? 'pointer-events-none'
+              : 'opacity-100 pointer-events-auto'
+          }`}
+          style={{
+            opacity: displayMode === 'hybrid' ? hybridOpacity : displayMode === 'real' ? 0 : 1
+          }}
         >
-          <defs>
-            {/* Dark Grid Pattern */}
-            <pattern id="d3-grid-pattern" width="24" height="24" patternUnits="userSpaceOnUse">
-              <path d="M 24 0 L 0 0 0 24" fill="none" stroke="rgba(255, 255, 255, 0.04)" strokeWidth="1" />
-            </pattern>
+          <svg
+            ref={svgRef}
+            viewBox={`0 0 ${svgWidth} ${svgHeight}`}
+            className="w-full h-full cursor-crosshair"
+            preserveAspectRatio="xMidYMid meet"
+            onClick={handleSvgClick}
+            onMouseMove={handleMouseMove}
+          >
+            <defs>
+              {/* Dark Grid Pattern */}
+              <pattern id="d3-grid-pattern" width="24" height="24" patternUnits="userSpaceOnUse">
+                <path d="M 24 0 L 0 0 0 24" fill="none" stroke="rgba(255, 255, 255, 0.04)" strokeWidth="1" />
+              </pattern>
 
-            {/* Glowing Rose Filter */}
-            <filter id="d3-hotspot-glow" x="-25%" y="-25%" width="150%" height="150%">
-              <feGaussianBlur stdDeviation="4" result="blur" />
-              <feComposite in="SourceGraphic" in2="blur" operator="over" />
-            </filter>
-          </defs>
+              {/* Glowing Rose Filter */}
+              <filter id="d3-hotspot-glow" x="-25%" y="-25%" width="150%" height="150%">
+                <feGaussianBlur stdDeviation="4" result="blur" />
+                <feComposite in="SourceGraphic" in2="blur" operator="over" />
+              </filter>
+            </defs>
 
-          {/* Background Canvas */}
-          <rect width={svgWidth} height={svgHeight} fill="#090d16" />
-          <rect width={svgWidth} height={svgHeight} fill="url(#d3-grid-pattern)" />
+            {/* Background Canvas */}
+            <rect
+              width={svgWidth}
+              height={svgHeight}
+              fill={displayMode === 'hybrid' ? 'rgba(9, 13, 22, 0.2)' : '#090d16'}
+            />
+            {displayMode !== 'hybrid' && (
+              <rect width={svgWidth} height={svgHeight} fill="url(#d3-grid-pattern)" />
+            )}
 
           {/* Coordinate Guide Lines (Static Frame) */}
           {latTicks.map((lat) => {
@@ -637,6 +940,7 @@ export const D3SeismicHeatmap: React.FC<D3SeismicHeatmapProps> = ({
             pointerEvents="none"
           />
         </svg>
+      </div>
 
         {/* Hover Risk Info Card */}
         {hoveredPoint && (
@@ -748,6 +1052,24 @@ export const D3SeismicHeatmap: React.FC<D3SeismicHeatmapProps> = ({
 
         {/* Heatmap Detail Sliders */}
         <div className="flex flex-wrap items-center gap-4 text-xs">
+          {/* Hybrid Overlay Blend Slider (only in hybrid mode) */}
+          {displayMode === 'hybrid' && (
+            <div className="flex items-center gap-2 bg-rose-50 px-2.5 py-1 rounded-lg border border-rose-200">
+              <span className="text-rose-800 font-semibold">Overlay Blend:</span>
+              <input
+                type="range"
+                min="0.2"
+                max="0.95"
+                step="0.05"
+                value={hybridOpacity}
+                onChange={(e) => setHybridOpacity(parseFloat(e.target.value))}
+                className="w-20 h-1.5 bg-rose-200 rounded-lg appearance-none cursor-pointer accent-rose-600"
+                title={`Hybrid overlay blend: ${Math.round(hybridOpacity * 100)}%`}
+              />
+              <span className="font-mono text-rose-700 font-bold w-8">{Math.round(hybridOpacity * 100)}%</span>
+            </div>
+          )}
+
           {/* Smoothness / Bandwidth */}
           <div className="flex items-center gap-2">
             <span className="text-zinc-600 font-medium">Kernel Bandwidth:</span>
